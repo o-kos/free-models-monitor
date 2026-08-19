@@ -1,0 +1,24 @@
+{
+  "id": "<GENERATE_A_UUID>",
+  "name": "Free Models Monitor Daily",
+  "enabled": true,
+  "agentId": "main",
+  "schedule": {
+    "kind": "cron",
+    "expr": "10 8 * * *",
+    "tz": "America/Sao_Paulo"
+  },
+  "sessionTarget": "isolated",
+  "wakeMode": "now",
+  "payload": {
+    "kind": "agentTurn",
+    "message": "Run the free models monitor:\n\npython3 -m free_models_monitor.monitor --format json --scan-dir <PATH_TO_AGENT_CONFIGS>\n\nIf the exit code is 2 (change detected):\n1. Send the full report to the user on their notification channel.\n2. If a model was removed and a fallback was suggested, follow SKILL.md to apply the switch with free_models_monitor.switch, then restart the gateway if your harness needs it.\n\nIf the exit code is 0, send a one-line summary.\nIf the exit code is 1, report the error.\n\nRules:\n- No markdown\n- No emojis\n- Reply with only the final text\n- End with NO_REPLY",
+    "timeoutSeconds": 300
+  },
+  "delivery": {
+    "mode": "announce",
+    "channel": "telegram",
+    "to": "<YOUR_CHAT_ID>",
+    "bestEffort": true
+  }
+}

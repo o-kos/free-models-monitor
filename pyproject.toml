@@ -1,0 +1,35 @@
+[project]
+name = "free-models-monitor"
+version = "1.0.0"
+description = "Portable monitor for free-tier LLM models across providers, for any agent harness or plain cron."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Nikolas de Hor", email = "nikolasdehor79@gmail.com" }]
+keywords = ["llm", "openrouter", "groq", "monitoring", "agents", "cron"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/nikolasdehor/free-models-monitor"
+
+[project.scripts]
+free-models-monitor = "free_models_monitor.monitor:main"
+free-models-switch = "free_models_monitor.switch:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["free_models_monitor*"]
+
+[tool.ruff]
+line-length = 115
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

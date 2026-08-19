@@ -1,0 +1,4 @@
+# free-models-monitor daily check at 08:10, notifies Telegram only when a
+# model was added or removed. Fill in the token/chat id, or export them in
+# the environment cron inherits instead of inlining them here.
+10 8 * * * TELEGRAM_BOT_TOKEN=<YOUR_BOT_TOKEN> TELEGRAM_CHAT_ID=<YOUR_CHAT_ID> /usr/bin/env python3 -m free_models_monitor.monitor --notify telegram >> /var/log/free-models-monitor.log 2>&1
