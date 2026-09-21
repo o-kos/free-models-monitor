@@ -7,7 +7,7 @@ standalone via cron, or as a skill for any agent harness.
 ## Install
 
 ```bash
-pip install git+https://github.com/nikolasdehor/free-models-monitor.git
+pip install git+https://github.com/o-kos/free-models-monitor.git
 ```
 
 Or run straight from a clone, no install:
@@ -49,6 +49,38 @@ config).
   to flag which configs reference a removed model.
 - Optionally notifies Telegram, Discord, Slack, or a generic webhook,
   reading credentials only from environment variables.
+- Optionally compares free OpenRouter models with the current paid coding and
+  agentic frontier, using benchmark data embedded in the live model catalog.
+
+## Quality-aware alerts
+
+Use `--quality-filter candidate` to receive new-model alerts only for models
+that support tools, have at least 128K context, and either pass the quality
+thresholds or are still waiting for benchmark data:
+
+```bash
+free-models-monitor --init --quality-filter candidate
+free-models-monitor --quality-filter candidate --notify telegram
+```
+
+Use `frontier` for the strictest mode. It reports a model only after both of
+these dynamic thresholds are satisfied:
+
+- `coding_index` is at least 90% of the best currently listed paid model;
+- `agentic_index` is at least 80% of the best currently listed paid model.
+
+```bash
+free-models-monitor --quality-filter frontier --notify discord
+```
+
+The paid baseline is recalculated on every run. A model that was already free
+but later receives qualifying benchmark scores emits a `quality_confirmed`
+event. Removals are still reported regardless of the quality filter so a dead
+model reference is not hidden.
+
+Quality filtering applies to OpenRouter. Groq models continue to be tracked for
+availability because its static free-tier list does not include comparable
+benchmark metadata.
 
 ## Options
 
@@ -59,6 +91,10 @@ config).
 | `--providers` | `openrouter,groq` | comma-separated provider list |
 | `--format` | `text` | `text` (chat-friendly, no markdown) or `json` |
 | `--min-context` | `32768` | minimum context length for a fallback suggestion |
+| `--quality-filter` | `none` | `none`, `candidate`, or strict `frontier` new-model alerts |
+| `--coding-ratio` | `0.90` | required fraction of the current paid coding frontier |
+| `--agentic-ratio` | `0.80` | required fraction of the current paid agentic frontier |
+| `--quality-min-context` | `128000` | minimum context for a quality candidate |
 | `--notify` | `none` | `telegram`, `discord`, `slack`, `webhook`, or `none` |
 | `--notify-always` | off | notify even when nothing changed |
 | `--init` | off | (re)write the snapshot without reporting a change |
@@ -121,3 +157,6 @@ pt-BR: see [README.pt-BR.md](README.pt-BR.md).
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+This fork adds dynamic quality-aware alerts. The original project is
+[nikolasdehor/free-models-monitor](https://github.com/nikolasdehor/free-models-monitor).

@@ -1,6 +1,6 @@
 [project]
 name = "free-models-monitor"
-version = "1.0.0"
+version = "1.1.0"
 description = "Portable monitor for free-tier LLM models across providers, for any agent harness or plain cron."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -14,7 +14,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/nikolasdehor/free-models-monitor"
+Homepage = "https://github.com/o-kos/free-models-monitor"
 
 [project.scripts]
 free-models-monitor = "free_models_monitor.monitor:main"

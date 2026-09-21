@@ -5,8 +5,11 @@ function below and registering it in PROVIDERS. monitor.py only calls
 functions from here, it never talks to a provider API directly.
 """
 import json
+import time
 import urllib.error
 import urllib.request
+
+from free_models_monitor.quality import free_model_info
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 USER_AGENT = "free-models-monitor/1.0"
@@ -49,6 +52,46 @@ def _is_free_price(value):
         return False
 
 
+def fetch_openrouter_catalog(timeout=15, retries=3):
+    """Fetches the complete OpenRouter model catalog with short retries."""
+    last_error = None
+    for attempt in range(retries):
+        req = urllib.request.Request(
+            OPENROUTER_MODELS_URL, headers={"User-Agent": USER_AGENT}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode())
+            models = payload.get("data")
+            if not isinstance(models, list):
+                raise ValueError("response has no data array")
+            return models, None
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            json.JSONDecodeError,
+            OSError,
+            ValueError,
+        ) as e:
+            last_error = e
+            if attempt + 1 < retries:
+                time.sleep(2**attempt)
+    return None, f"OpenRouter fetch error after {retries} attempts: {last_error}"
+
+
+def openrouter_free_from_catalog(catalog):
+    """Keeps zero-priced OpenRouter models and their quality metadata."""
+    free = {}
+    for model in catalog:
+        model_id = model.get("id", "")
+        pricing = model.get("pricing", {})
+        if _is_free_price(pricing.get("prompt")) and _is_free_price(
+            pricing.get("completion")
+        ):
+            free[model_id] = free_model_info(model)
+    return free
+
+
 def fetch_openrouter_free(timeout=15):
     """Fetches OpenRouter's model catalog, keeps the ones priced at zero.
 
@@ -56,27 +99,10 @@ def fetch_openrouter_free(timeout=15):
     prefix; monitor.py normalizes ids). Returns (None, error_str) on
     failure so callers can tell "zero free models" from "fetch failed".
     """
-    req = urllib.request.Request(
-        OPENROUTER_MODELS_URL, headers={"User-Agent": USER_AGENT}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode())
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as e:
-        return None, f"OpenRouter fetch error: {e}"
-
-    free = {}
-    for m in payload.get("data", []):
-        mid = m.get("id", "")
-        pricing = m.get("pricing", {})
-        if _is_free_price(pricing.get("prompt")) and _is_free_price(
-            pricing.get("completion")
-        ):
-            free[mid] = {
-                "name": m.get("name", mid),
-                "context_length": m.get("context_length", 0) or 0,
-            }
-    return free, None
+    catalog, error = fetch_openrouter_catalog(timeout=timeout)
+    if error:
+        return None, error
+    return openrouter_free_from_catalog(catalog), None
 
 
 def fetch_groq_free():

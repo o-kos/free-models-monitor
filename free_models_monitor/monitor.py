@@ -16,7 +16,16 @@ from free_models_monitor import notify as notify_mod
 from free_models_monitor.providers import (
     DEFAULT_FALLBACK_CHAIN,
     fetch_groq_free,
+    fetch_openrouter_catalog,
     fetch_openrouter_free,
+    openrouter_free_from_catalog,
+)
+from free_models_monitor.quality import (
+    DEFAULT_AGENTIC_RATIO,
+    DEFAULT_CODING_RATIO,
+    DEFAULT_QUALITY_MIN_CONTEXT,
+    build_paid_frontier,
+    classify_free_catalog,
 )
 
 HISTORY_CAP = 200
@@ -75,11 +84,35 @@ def load_fallback_chain(path):
     return list(data)
 
 
-def fetch_current_models(providers, banned):
+def fetch_current_models(providers, banned, quality_config=None):
     """Fetches and merges free models across the requested providers."""
     current, counts, errors = {}, {}, []
+    quality_context = None
     if "openrouter" in providers:
-        or_free, err = fetch_openrouter_free()
+        if quality_config:
+            catalog, err = fetch_openrouter_catalog()
+            or_free = None
+            if not err:
+                or_free = openrouter_free_from_catalog(catalog)
+                try:
+                    frontier = build_paid_frontier(catalog)
+                    or_free = classify_free_catalog(
+                        or_free,
+                        frontier,
+                        coding_ratio=quality_config["coding_ratio"],
+                        agentic_ratio=quality_config["agentic_ratio"],
+                        min_context=quality_config["min_context"],
+                    )
+                    quality_context = {
+                        "available": True,
+                        "frontier": frontier,
+                        "thresholds": dict(quality_config),
+                    }
+                except ValueError as exc:
+                    errors.append(f"OpenRouter quality scoring error: {exc}")
+                    quality_context = {"available": False, "error": str(exc)}
+        else:
+            or_free, err = fetch_openrouter_free()
         if err:
             errors.append(err)
         else:
@@ -98,7 +131,7 @@ def fetch_current_models(providers, banned):
             filtered = {k: v for k, v in groq_free.items() if k not in banned}
             current.update(filtered)
             counts["groq"] = len(filtered)
-    return current, counts, errors
+    return current, counts, errors, quality_context
 
 
 def find_agents_using_model(model_id, scan_dirs):
@@ -163,6 +196,45 @@ def add_history_entry(history, change_type, model_id, model_info, details=None):
     return history
 
 
+def quality_status(model_info):
+    quality = model_info.get("quality", {})
+    return quality.get("status") if isinstance(quality, dict) else None
+
+
+def quality_change_type(model_id, model_info, quality_mode):
+    """Returns the event type for a newly seen model, or None if filtered."""
+    if quality_mode == "none" or model_id.startswith("groq/"):
+        return "added"
+    status = quality_status(model_info)
+    if status == "confirmed":
+        return "quality_confirmed"
+    if quality_mode == "candidate" and status == "candidate":
+        return "quality_candidate"
+    return None
+
+
+def quality_summary(model_info):
+    quality = model_info.get("quality", {})
+    coding = model_info.get("coding_index")
+    agentic = model_info.get("agentic_index")
+    coding_ratio = quality.get("coding_ratio")
+    agentic_ratio = quality.get("agentic_ratio")
+
+    def score_text(label, score, relative):
+        if score is None:
+            return f"{label}=pending"
+        if relative is None:
+            return f"{label}={score:g}"
+        return f"{label}={score:g} ({relative * 100:.1f}% of paid frontier)"
+
+    return ", ".join(
+        [
+            score_text("coding", coding, coding_ratio),
+            score_text("agentic", agentic, agentic_ratio),
+        ]
+    )
+
+
 def build_report_text(changes, affected_by_model, switches, now_label):
     lines = [f"ALERT: change detected in free models monitor ({now_label})"]
     switch_by_from = {s["from"]: s for s in switches}
@@ -188,11 +260,34 @@ def build_report_text(changes, affected_by_model, switches, now_label):
                 "Model ADDED to free tier:",
                 f"  + {mid} ({info.get('name', mid)}, ctx={ctx})",
             ]
+        elif change["type"] == "quality_candidate":
+            ctx = info.get("context_length", 0)
+            lines += [
+                "",
+                "Promising free development model; benchmarks pending:",
+                f"  ? {mid} ({info.get('name', mid)}, ctx={ctx})",
+                f"  {quality_summary(info)}",
+            ]
+        elif change["type"] == "quality_confirmed":
+            ctx = info.get("context_length", 0)
+            lines += [
+                "",
+                "Free model reached paid-frontier quality thresholds:",
+                f"  + {mid} ({info.get('name', mid)}, ctx={ctx})",
+                f"  {quality_summary(info)}",
+            ]
     return "\n".join(lines)
 
 
 def compute_diff(
-    current, snapshot, scan_dirs, fallback_chain, banned, min_context, history
+    current,
+    snapshot,
+    scan_dirs,
+    fallback_chain,
+    banned,
+    min_context,
+    history,
+    quality_mode="none",
 ):
     """Diffs current against the previous snapshot, updating history in place."""
     normalized_snapshot = {
@@ -204,8 +299,31 @@ def compute_diff(
     changes, affected_by_model, switches = [], {}, []
 
     for mid, info in new_models.items():
-        changes.append({"type": "added", "model_id": mid, "model_info": info})
-        history = add_history_entry(history, "added", mid, info)
+        change_type = quality_change_type(mid, info, quality_mode)
+        if change_type:
+            changes.append(
+                {"type": change_type, "model_id": mid, "model_info": info}
+            )
+            history = add_history_entry(history, change_type, mid, info)
+
+    if quality_mode != "none":
+        for mid in current.keys() & normalized_snapshot.keys():
+            info = current[mid]
+            old_info = normalized_snapshot[mid]
+            if (
+                quality_status(info) == "confirmed"
+                and quality_status(old_info) != "confirmed"
+            ):
+                changes.append(
+                    {
+                        "type": "quality_confirmed",
+                        "model_id": mid,
+                        "model_info": info,
+                    }
+                )
+                history = add_history_entry(
+                    history, "quality_confirmed", mid, info
+                )
 
     for mid, info in removed_models.items():
         changes.append({"type": "removed", "model_id": mid, "model_info": info})
@@ -242,6 +360,33 @@ def parse_args(argv=None):
     p.add_argument("--format", choices=["text", "json"], default="text")
     p.add_argument("--min-context", type=int, default=DEFAULT_MIN_CONTEXT)
     p.add_argument(
+        "--quality-filter",
+        choices=("none", "candidate", "frontier"),
+        default="none",
+        help=(
+            "filter new-model alerts by dynamic OpenRouter quality: "
+            "candidate includes capable unscored models; frontier only confirmed models"
+        ),
+    )
+    p.add_argument(
+        "--coding-ratio",
+        type=ratio,
+        default=DEFAULT_CODING_RATIO,
+        help="minimum fraction of the best paid coding score (default: 0.90)",
+    )
+    p.add_argument(
+        "--agentic-ratio",
+        type=ratio,
+        default=DEFAULT_AGENTIC_RATIO,
+        help="minimum fraction of the best paid agentic score (default: 0.80)",
+    )
+    p.add_argument(
+        "--quality-min-context",
+        type=positive_int,
+        default=DEFAULT_QUALITY_MIN_CONTEXT,
+        help="minimum context for a quality candidate (default: 128000)",
+    )
+    p.add_argument(
         "--notify",
         choices=["telegram", "discord", "slack", "webhook", "none"],
         default="none",
@@ -250,6 +395,20 @@ def parse_args(argv=None):
     p.add_argument("--init", action="store_true")
     p.add_argument("--fallback-chain-file", default=None)
     return p.parse_args(argv)
+
+
+def ratio(value):
+    parsed = float(value)
+    if not 0 < parsed <= 1:
+        raise argparse.ArgumentTypeError("must be greater than 0 and no greater than 1")
+    return parsed
+
+
+def positive_int(value):
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be positive")
+    return parsed
 
 
 def main(argv=None):
@@ -262,7 +421,23 @@ def main(argv=None):
     banned = load_banned_models(state_dir)
     fallback_chain = load_fallback_chain(args.fallback_chain_file)
 
-    current, counts, errors = fetch_current_models(providers, banned)
+    quality_config = None
+    if args.quality_filter != "none":
+        quality_config = {
+            "coding_ratio": args.coding_ratio,
+            "agentic_ratio": args.agentic_ratio,
+            "min_context": args.quality_min_context,
+        }
+
+    current, counts, errors, quality_context = fetch_current_models(
+        providers, banned, quality_config=quality_config
+    )
+    if quality_config and (
+        not quality_context or not quality_context.get("available", False)
+    ):
+        for error in errors or ["OpenRouter quality scoring is unavailable"]:
+            print(f"ERROR: {error}", file=sys.stderr)
+        return 1
     if errors and not current:
         for err in errors:
             print(f"ERROR: {err}", file=sys.stderr)
@@ -291,6 +466,7 @@ def main(argv=None):
         banned,
         args.min_context,
         history,
+        quality_mode=args.quality_filter,
     )
     save_json_safe(snapshot_path, current)
     save_json_safe(history_path, history)
@@ -304,6 +480,7 @@ def main(argv=None):
                 "affected_configs": affected_by_model,
                 "switches": switches,
                 "provider_counts": counts,
+                "quality": quality_context,
             },
             indent=2,
             ensure_ascii=False,

@@ -237,13 +237,14 @@ class BanlistTests(unittest.TestCase):
                 {"groq/g:free": {"name": "G", "context_length": 1000}},
                 None,
             )
-            current, _counts, errors = monitor.fetch_current_models(
+            current, _counts, errors, quality_context = monitor.fetch_current_models(
                 {"openrouter", "groq"}, banned={"openrouter/bad:free"}
             )
             self.assertIn("openrouter/a:free", current)
             self.assertNotIn("openrouter/bad:free", current)
             self.assertIn("groq/g:free", current)
             self.assertEqual(errors, [])
+            self.assertIsNone(quality_context)
 
     def test_fetch_current_models_collects_groq_error(self):
         with patch(
@@ -254,11 +255,142 @@ class BanlistTests(unittest.TestCase):
                 None,
             )
             mock_groq.return_value = (None, "Groq fetch error: boom")
-            current, _counts, errors = monitor.fetch_current_models(
+            current, _counts, errors, quality_context = monitor.fetch_current_models(
                 {"openrouter", "groq"}, banned=set()
             )
             self.assertIn("openrouter/a:free", current)
             self.assertEqual(errors, ["Groq fetch error: boom"])
+            self.assertIsNone(quality_context)
+
+
+class QualityChangeTests(unittest.TestCase):
+    def quality_info(self, status, coding=72, agentic=48):
+        return {
+            "name": "Model",
+            "context_length": 200000,
+            "coding_index": coding,
+            "agentic_index": agentic,
+            "quality": {
+                "status": status,
+                "coding_ratio": coding / 80 if coding is not None else None,
+                "agentic_ratio": agentic / 60 if agentic is not None else None,
+            },
+        }
+
+    def test_frontier_mode_filters_new_weak_model(self):
+        current = {
+            "openrouter/weak:free": self.quality_info(
+                "below_threshold", coding=40, agentic=20
+            )
+        }
+        changes, _affected, _switches, _history = monitor.compute_diff(
+            current,
+            {},
+            [],
+            [],
+            set(),
+            32768,
+            {"changes": []},
+            quality_mode="frontier",
+        )
+        self.assertEqual(changes, [])
+
+    def test_candidate_mode_reports_new_unscored_model(self):
+        current = {
+            "openrouter/new:free": self.quality_info(
+                "candidate", coding=None, agentic=None
+            )
+        }
+        changes, _affected, _switches, _history = monitor.compute_diff(
+            current,
+            {},
+            [],
+            [],
+            set(),
+            32768,
+            {"changes": []},
+            quality_mode="candidate",
+        )
+        self.assertEqual(changes[0]["type"], "quality_candidate")
+
+    def test_existing_candidate_promotion_is_reported(self):
+        model_id = "openrouter/promoted:free"
+        current = {model_id: self.quality_info("confirmed")}
+        snapshot = {
+            model_id: self.quality_info("candidate", coding=None, agentic=None)
+        }
+        changes, _affected, _switches, history = monitor.compute_diff(
+            current,
+            snapshot,
+            [],
+            [],
+            set(),
+            32768,
+            {"changes": []},
+            quality_mode="frontier",
+        )
+        self.assertEqual(changes[0]["type"], "quality_confirmed")
+        self.assertEqual(history["changes"][0]["type"], "quality_confirmed")
+
+    def test_text_report_includes_quality_scores(self):
+        info = self.quality_info("confirmed")
+        text = monitor.build_report_text(
+            [
+                {
+                    "type": "quality_confirmed",
+                    "model_id": "openrouter/good:free",
+                    "model_info": info,
+                }
+            ],
+            {},
+            [],
+            "2026-01-01 00:00 UTC",
+        )
+        self.assertIn("paid-frontier", text)
+        self.assertIn("90.0%", text)
+
+    def test_quality_filter_keeps_groq_additions(self):
+        info = {"name": "Groq model", "context_length": 128000}
+        self.assertEqual(
+            monitor.quality_change_type("groq/model", info, "frontier"), "added"
+        )
+
+    def test_fetch_current_models_applies_live_frontier(self):
+        def catalog_model(model_id, prompt, coding, agentic):
+            return {
+                "id": model_id,
+                "name": model_id,
+                "pricing": {"prompt": prompt, "completion": prompt},
+                "context_length": 200000,
+                "architecture": {"output_modalities": ["text"]},
+                "supported_parameters": ["tools"],
+                "benchmarks": {
+                    "artificial_analysis": {
+                        "coding_index": coding,
+                        "agentic_index": agentic,
+                    }
+                },
+            }
+
+        catalog = [
+            catalog_model("paid/frontier", "0.1", 80, 60),
+            catalog_model("free/good:free", "0", 72, 48),
+        ]
+        config = {"coding_ratio": 0.9, "agentic_ratio": 0.8, "min_context": 128000}
+        with patch(
+            "free_models_monitor.monitor.fetch_openrouter_catalog",
+            return_value=(catalog, None),
+        ):
+            current, counts, errors, quality_context = monitor.fetch_current_models(
+                {"openrouter"}, banned=set(), quality_config=config
+            )
+        self.assertEqual(errors, [])
+        self.assertEqual(counts["openrouter"], 1)
+        self.assertEqual(
+            current["openrouter/free/good:free"]["quality"]["status"],
+            "confirmed",
+        )
+        self.assertEqual(quality_context["frontier"]["coding_index"], 80)
 
 
 class MainExitCodeTests(unittest.TestCase):
@@ -324,6 +456,22 @@ class MainExitCodeTests(unittest.TestCase):
                 mock_or.return_value = (None, "boom")
                 code = monitor.main(["--state-dir", tmp, "--providers", "openrouter"])
                 self.assertEqual(code, 1)
+
+    def test_quality_failure_returns_one_without_overwriting_state(self):
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "free_models_monitor.monitor.fetch_current_models",
+            return_value=(
+                {"openrouter/a:free": {"name": "A"}},
+                {"openrouter": 1},
+                ["quality unavailable"],
+                {"available": False, "error": "quality unavailable"},
+            ),
+        ):
+            code = monitor.main(
+                ["--state-dir", tmp, "--quality-filter", "frontier"]
+            )
+            self.assertEqual(code, 1)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "snapshot.json")))
 
     def test_scan_dir_reports_affected_config_on_removal(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as scan_dir:

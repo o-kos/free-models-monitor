@@ -1,6 +1,6 @@
 ---
 name: free-models-monitor
-description: Checks whether free-tier LLM models on OpenRouter and Groq were added or removed since the last run, and helps decide what to do about it (notify, suggest a fallback, or apply a config swap). Use whenever the user asks to check free model status, run the model monitor, or handle a model that stopped being free.
+description: Checks whether free-tier LLM models on OpenRouter and Groq were added or removed, optionally detects models approaching the paid coding and agentic frontier, and helps decide what to do about it. Use whenever the user asks to check free model status, find a strong free development model, run the model monitor, or handle a model that stopped being free.
 ---
 
 # free-models-monitor
@@ -26,6 +26,20 @@ python3 -m free_models_monitor.monitor --init
 Add `--scan-dir <path>` (repeatable) for every directory that holds your
 agent configs, so a removal can be matched to the configs that reference it.
 
+For low-noise development-model alerts, add one of:
+
+```bash
+# Include capable new models whose benchmark data is still pending
+python3 -m free_models_monitor.monitor --quality-filter candidate --format json
+
+# Report only models confirmed near the current paid frontier
+python3 -m free_models_monitor.monitor --quality-filter frontier --format json
+```
+
+Quality mode requires tool support and at least 128K context. Its default
+thresholds are 90% of the best paid coding score and 80% of the best paid
+agentic score in the current OpenRouter catalog.
+
 Read the exit code before reading the output:
 
 - `0`: nothing changed. Nothing else to do.
@@ -47,9 +61,14 @@ With `--format json` the body has:
 }
 ```
 
-`changes[].type` is either `"added"` or `"removed"`.
+`changes[].type` is `"added"`, `"removed"`, `"quality_candidate"`, or
+`"quality_confirmed"`.
 
 - `type: "added"`: informational. Mention it, no action needed.
+- `type: "quality_candidate"`: a tool-capable, long-context free model has
+  incomplete benchmarks. Mention it as promising but unconfirmed.
+- `type: "quality_confirmed"`: the free model crossed both dynamic quality
+  thresholds and is worth evaluating on the user's own repository.
 - `type: "removed"`: this is the case that matters. Check `affected_configs`
   for that model id, and `switches` for the suggested replacement.
 

@@ -51,7 +51,7 @@ class FetchOpenRouterTests(unittest.TestCase):
         with patch(
             "free_models_monitor.providers.urllib.request.urlopen",
             side_effect=urllib.error.URLError("boom"),
-        ):
+        ), patch("free_models_monitor.providers.time.sleep"):
             free, err = providers.fetch_openrouter_free()
         self.assertIsNone(free)
         self.assertIn("OpenRouter fetch error", err)
@@ -63,10 +63,31 @@ class FetchOpenRouterTests(unittest.TestCase):
         with patch(
             "free_models_monitor.providers.urllib.request.urlopen",
             return_value=mock_resp,
-        ):
+        ), patch("free_models_monitor.providers.time.sleep"):
             free, err = providers.fetch_openrouter_free()
         self.assertIsNone(free)
         self.assertIn("OpenRouter fetch error", err)
+
+    def test_preserves_quality_metadata_for_free_models(self):
+        catalog = [
+            {
+                "id": "coder:free",
+                "name": "Coder",
+                "pricing": {"prompt": "0", "completion": "0"},
+                "context_length": 200000,
+                "supported_parameters": ["tools"],
+                "benchmarks": {
+                    "artificial_analysis": {
+                        "coding_index": 72,
+                        "agentic_index": 48,
+                    }
+                },
+            }
+        ]
+        free = providers.openrouter_free_from_catalog(catalog)
+        self.assertTrue(free["coder:free"]["supports_tools"])
+        self.assertEqual(free["coder:free"]["coding_index"], 72)
+        self.assertEqual(free["coder:free"]["agentic_index"], 48)
 
 
 class FetchGroqTests(unittest.TestCase):
