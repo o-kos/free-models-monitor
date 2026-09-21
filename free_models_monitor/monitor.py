@@ -372,7 +372,7 @@ def parse_args(argv=None):
         "--coding-ratio",
         type=ratio,
         default=DEFAULT_CODING_RATIO,
-        help="minimum fraction of the best paid coding score (default: 0.90)",
+        help="minimum fraction of the best paid coding score (default: 0.80)",
     )
     p.add_argument(
         "--agentic-ratio",

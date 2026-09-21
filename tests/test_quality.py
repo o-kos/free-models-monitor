@@ -94,5 +94,11 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(result["quality"]["status"], "ineligible")
 
 
+class ThresholdDefaultsTests(unittest.TestCase):
+    def test_default_thresholds_are_symmetric(self):
+        self.assertEqual(quality.DEFAULT_CODING_RATIO, 0.80)
+        self.assertEqual(quality.DEFAULT_AGENTIC_RATIO, 0.80)
+
+
 if __name__ == "__main__":
     unittest.main()

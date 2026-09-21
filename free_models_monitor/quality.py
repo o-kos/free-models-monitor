@@ -5,7 +5,7 @@ indices.  This module compares free models with the best currently listed
 paid models, so thresholds move with the frontier instead of becoming stale.
 """
 
-DEFAULT_CODING_RATIO = 0.90
+DEFAULT_CODING_RATIO = 0.80
 DEFAULT_AGENTIC_RATIO = 0.80
 DEFAULT_QUALITY_MIN_CONTEXT = 128000
 

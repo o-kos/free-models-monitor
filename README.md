@@ -66,7 +66,7 @@ free-models-monitor --quality-filter candidate --notify telegram
 Use `frontier` for the strictest mode. It reports a model only after both of
 these dynamic thresholds are satisfied:
 
-- `coding_index` is at least 90% of the best currently listed paid model;
+- `coding_index` is at least 80% of the best currently listed paid model;
 - `agentic_index` is at least 80% of the best currently listed paid model.
 
 ```bash
@@ -92,7 +92,7 @@ benchmark metadata.
 | `--format` | `text` | `text` (chat-friendly, no markdown) or `json` |
 | `--min-context` | `32768` | minimum context length for a fallback suggestion |
 | `--quality-filter` | `none` | `none`, `candidate`, or strict `frontier` new-model alerts |
-| `--coding-ratio` | `0.90` | required fraction of the current paid coding frontier |
+| `--coding-ratio` | `0.80` | required fraction of the current paid coding frontier |
 | `--agentic-ratio` | `0.80` | required fraction of the current paid agentic frontier |
 | `--quality-min-context` | `128000` | minimum context for a quality candidate |
 | `--notify` | `none` | `telegram`, `discord`, `slack`, `webhook`, or `none` |

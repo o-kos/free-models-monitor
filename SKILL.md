@@ -37,7 +37,7 @@ python3 -m free_models_monitor.monitor --quality-filter frontier --format json
 ```
 
 Quality mode requires tool support and at least 128K context. Its default
-thresholds are 90% of the best paid coding score and 80% of the best paid
+thresholds are 80% of the best paid coding score and 80% of the best paid
 agentic score in the current OpenRouter catalog.
 
 Read the exit code before reading the output:
